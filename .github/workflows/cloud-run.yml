@@ -1,58 +1,42 @@
-# Copyright 2019 Google, LLC.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-name: Build and Deploy to Cloud Run
+name: Docker
 
 on:
-    push:
-        branches:
-            - master
-
-# Environment variables available to all jobs and steps in this workflow
-env:
-    PROJECT_ID: ${{ secrets.PROJECT_ID }}
-    RUN_REGION: me-west1
-    SERVICE_NAME: niket-service
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
 
 jobs:
-    setup-build-deploy:
-        name: Setup, Build, and Deploy
+
+    deploy:
+      
+        name: Deploy
         runs-on: ubuntu-latest
-
+        env:
+          IMAGE_NAME: gcr.io/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_APP_NAME }}
         steps:
-            - name: Checkout
-              uses: actions/checkout@v1
+        
+        - name: Login
+          uses: GoogleCloudPlatform/github-actions/setup-gcloud@master
+          with:
+            project_id: ${{ secrets.GCP_PROJECT_ID }}
+            service_account_email: ${{ secrets.GCP_EMAIL }}
+            service_account_key: ${{ secrets.GCP_CREDENTIALS }}
+            
+        - name: Configure Docker
+          run: gcloud auth configure-docker --quiet
+            
+        - name: Checkout repository
+          uses: actions/checkout@v2
 
-            # Setup gcloud CLI
-            - uses: GoogleCloudPlatform/github-actions/setup-gcloud@main
-              with:
-                  version: '275.0.0'
-                  service_account_email: ${{ secrets.SA_EMAIL }}
-                  service_account_key: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS}}
+        - name: Build Docker image
+          run: docker build . --tag $IMAGE_NAME 
 
-            # Configure gcloud CLI
-            - name: gcloud Set up
-              run: |
-                  gcloud config set project $PROJECT_ID
-            # Build and push image to Google Container Registry
-            - name: Build
-              run: |
-                  gcloud builds submit -t gcr.io/$PROJECT_ID/$SERVICE_NAME:$GITHUB_SHA
-            # Deploy image to Cloud Run
-            - name: Deploy
-              run: |
-                  gcloud run deploy $SERVICE_NAME \
-                    --region $RUN_REGION \
-                    --image gcr.io/$PROJECT_ID/$SERVICE_NAME:$GITHUB_SHA \
-                    --platform managed
+        - name: Test Docker image
+          run: docker run $IMAGE_NAME sh -c "go test -v" 
+
+        - name: Push Docker image
+          run: docker push $IMAGE_NAME
+
+        - name: Deploy Docker image
+          run: gcloud run deploy ${{ secrets.GCP_PROJECT_ID }} --image $IMAGE_NAME --region me-west1 --platform managed --allow-unauthenticated
